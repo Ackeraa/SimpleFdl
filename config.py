@@ -1,0 +1,11 @@
+HOST = '127.0.0.1'
+PORT = 9999
+BUFF_SIZE = 4096
+
+DATASET_NAME = "voc2012"
+DATA_PATH = "D:\\tmp\\VOC"
+MODEL = "faster" # faster/retian
+CLIENT_NUMS = 1
+GPU_IDS = [0 for _ in range(CLIENT_NUMS)]
+TOTAL_EPOCHS = 2
+TOTAL_ROUNDS = 2
