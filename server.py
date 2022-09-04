@@ -37,6 +37,8 @@ class Server:
         else:
             self.budget_num = 1000
 
+        self.model_path = os.path.join("modelp", "global.pt")
+
         if 'voc' in self.dataset_name:
             if 'faster' in self.model:
                 if not self.load_model():
@@ -52,7 +54,6 @@ class Server:
                 if not self.load_model():
                     self.global_model = retinanet_resnet50_fpn_cal(num_classes=self.num_classes, min_size=800, max_size=1333).state_dict()
 
-        self.model_path = os.path.join("modelp", "global.pt")
         self.save_model()
 
     def load_model(self):
@@ -67,7 +68,7 @@ class Server:
         torch.save(self.global_model, self.model_path)
 
     def load_client_model(self, id):
-        path = os.path.join("modelp", "client"+str(id)+".pth")
+        path = os.path.join("modelp", "client"+str(id)+".pt")
         return torch.load(path)
 
     def load_p(self):
@@ -102,7 +103,7 @@ class Server:
         self.total_budget += self.budget_num
         self.save_p()
      
-    def load_finished_clients():
+    def load_finished_clients(self):
         path = os.path.join("modelp", "finished_clients.txt")
         if not os.path.exists(path):
             with open(path, "w+") as f:
@@ -114,7 +115,7 @@ class Server:
         
         return finished_clients
 
-    def save_finished_clients(finished_clients):
+    def save_finished_clients(self, finished_clients):
         path = os.path.join("modelp", "finished_clients.txt")
         with open(path, "w+") as f:
             f.write(str(finished_clients))

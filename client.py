@@ -110,15 +110,26 @@ class Client:
             elif 'retina' in self.model:
                 self.task_model = retinanet_resnet50_fpn_cal(num_classes=self.num_classes, min_size=800, max_size=1333)
 
+        self.cached_stamp = 0
+
+    def wait(self):
+        path = os.path.join("modelp", "global.pt")
+        while True:
+            stamp = os.stat(path).st_mtime
+            if stamp != self.cached_stamp:
+                self.cached_stamp - stamp
+                break
+            time.sleep(300)
+
     def load_model(self):
-        path = os.path.join("modelp", "global.pth")
+        path = os.path.join("modelp", "global.pt")
         self.task_model.load_state_dict(torch.load(path))
 
         self.task_model.to(self.device)
 
     def save_model(self):
-        path = os.path.join("modelp", "client"+str(self.id)+".pth")
-        torch.save(self.task_model.state_dict(), path) 
+        path = os.path.join("modelp", "client"+str(self.id)+".pt")
+        torch.save(self.task_model.to(device='cpu').state_dict(), path) 
 
     def train(self, cycle):
         self.load_model()
@@ -299,9 +310,8 @@ class Client:
         iner_area = width * height
         return iner_area / (Aarea + Barea - iner_area)
 
-
     def get_uncertainty(self, unlabeled_loader):
-        # self.task_model.to(device=self.device)
+        self.task_model.to(device=self.device)
         for aug in self.augs:
             if aug not in ['flip', 'multi_ga', 'color_adjust', 'color_swap', 'multi_color_adjust', 'multi_sp', 'cut_out',
                         'multi_cut_out', 'multi_resize', 'larger_resize', 'smaller_resize', 'rotation', 'ga', 'sp']:

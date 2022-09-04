@@ -52,8 +52,12 @@ class Worker:
         data = { 'typ': 'sumq', 'content': sumq }
         self.send(data)
 
+    def wait(self):
+        self.client.wait()
+
 if __name__ == '__main__':
     worker = Worker()
     for i in range(TOTAL_ROUNDS):
+        worker.wait()
         worker.train(i)
         worker.calculate()
