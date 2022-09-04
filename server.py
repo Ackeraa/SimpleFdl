@@ -86,7 +86,7 @@ class Server:
 
     def save_p(self):
         path = os.path.join("modelp", "p.txt")
-        with open(path, 'r') as f:
+        with open(path, 'w+') as f:
             for x in self.p.tolist():
                 f.write(str(x) + " ")
             f.write("\n")
@@ -99,6 +99,7 @@ class Server:
         return torch.nn.functional.softmax(self.p/self.total_budget, -1)
 
     def update_p(self, q):
+        self.get_p()
         self.p += q 
         self.total_budget += self.budget_num
         self.save_p()
