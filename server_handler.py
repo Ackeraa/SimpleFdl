@@ -37,6 +37,7 @@ class Handler(socketserver.BaseRequestHandler):
             'model': self.server.model,
             'indices': self.server.indices[self.client_nums],
             'total_epochs': self.server.total_epochs,
+            'id': self.client_nums,
         }
         self.client_nums += 1
         data = { 'typ': 'start', 'content': train_info }

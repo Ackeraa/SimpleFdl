@@ -1,4 +1,5 @@
-modelp/*
+modelp/*.pt
+modelp/*.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

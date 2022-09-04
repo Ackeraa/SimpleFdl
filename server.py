@@ -18,7 +18,6 @@ class Server:
         self.total_epochs = TOTAL_EPOCHS
         self.total_rounds = TOTAL_ROUNDS
         self.client_nums = CLIENT_NUMS
-        self.finished_clients = 0
         
         if 'voc2007' in self.dataset_name:
             dataset, self.num_classes = get_dataset(self.dataset, "trainval", get_transform(train=True), self.data_path)
@@ -40,26 +39,21 @@ class Server:
 
         if 'voc' in self.dataset_name:
             if 'faster' in self.model:
-                self.model_path = os.path.join("modelp", "voc_faster.pt")
                 if not self.load_model():
                     self.global_model = fasterrcnn_resnet50_fpn_feature(num_classes=self.num_classes, min_size=600, max_size=1000).state_dict()
-                    self.save_model()
             elif 'retina' in args.model:
-                self.model_path = os.path.join("modelp", "voc_retina.pt")
                 if not self.load_model():
                     self.global_model = retinanet_resnet50_fpn_cal(num_classes=self.num_classes, min_size=600, max_size=1000).state_dict()
-                    self.save_model()
         else:
             if 'faster' in self.model:
-                self.model_path = os.path.join("modelp", "coco_faster.pt")
                 if not self.load_model():
                     self.global_model = fasterrcnn_resnet50_fpn_feature(num_classes=self.num_classes, min_size=800, max_size=1333).state_dict()
-                    self.save_model()
             elif 'retina' in self.model:
-                self.model_path = os.path.join("modelp", "coco_retina.pt")
                 if not self.load_model():
                     self.global_model = retinanet_resnet50_fpn_cal(num_classes=self.num_classes, min_size=800, max_size=1333).state_dict()
-                    self.save_model()
+
+        self.model_path = os.path.join("modelp", "global.pt")
+        self.save_model()
 
     def load_model(self):
         try:
@@ -71,6 +65,10 @@ class Server:
 
     def save_model(self):
         torch.save(self.global_model, self.model_path)
+
+    def load_client_model(self, id):
+        path = os.path.join("modelp", "client"+str(id)+".pth")
+        return torch.load(path)
 
     def load_p(self):
         path = os.path.join("modelp", "p.txt")
@@ -104,16 +102,36 @@ class Server:
         self.total_budget += self.budget_num
         self.save_p()
      
-    def aggregate(self, model):
+    def load_finished_clients():
+        path = os.path.join("modelp", "finished_clients.txt")
+        if not os.path.exists(path):
+            with open(path, "w+") as f:
+                f.write("0")
+                finished_clients = 0
+        else:
+            with open(path, 'r') as f:
+                finished_clients = str(f.readlines()[0])
+        
+        return finished_clients
+
+    def save_finished_clients(finished_clients):
+        path = os.path.join("modelp", "finished_clients.txt")
+        with open(path, "w+") as f:
+            f.write(str(finished_clients))
+
+    def aggregate(self, id):
+        model = self.load_client_model(id)
         for layer in model:
             self.global_model[layer] += model[layer]
 
-        self.finished_clients += 1
-        if self.finished_clients == self.client_nums:
-            self.finished_clients = 0
+        finished_clients = self.load_finished_clients()
+        finished_clients += 1
+        if finished_clients == self.client_nums:
+            finished_clients = 0
             for layer in model:
                 self.global_model[layer] /= self.client_nums
             self.save_model()
+        self.save_finished_clients(finished_clients)
         
         # for client in self.clients:
         #     client.task_model.load_state_dict(model)      

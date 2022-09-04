@@ -34,13 +34,14 @@ from detection.retinanet_cal import retinanet_mobilenet, retinanet_resnet50_fpn_
 # from phe import paillier
 
 class Client:
-    def __init__(self, gpu_id, data_path, dataset_name, model, indices, total_epochs):
+    def __init__(self, gpu_id, data_path, dataset_name, model, indices, total_epochs, id):
         torch.cuda.set_device(gpu_id)
         random.seed(0)
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
         torch.cuda.manual_seed_all(0)
 
+        self.id = id
         if gpu_id == -1:
             self.device = torch.device('cpu')
         else:
@@ -109,7 +110,90 @@ class Client:
             elif 'retina' in self.model:
                 self.task_model = retinanet_resnet50_fpn_cal(num_classes=self.num_classes, min_size=800, max_size=1333)
 
+    def load_model(self):
+        path = os.path.join("modelp", "global.pth")
+        self.task_model.load_state_dict(torch.load(path))
+
         self.task_model.to(self.device)
+
+    def save_model(self):
+        path = os.path.join("modelp", "client"+str(self.id)+".pth")
+        torch.save(self.task_model.state_dict(), path) 
+
+    def train(self, cycle):
+        self.load_model()
+        if self.aspect_ratio_group_factor >= 0:
+            group_ids = create_aspect_ratio_groups(self.dataset, k=self.aspect_ratio_group_factor)
+            train_batch_sampler = GroupedBatchSampler(self.train_sampler, group_ids, self.batch_size)
+        else:
+            train_batch_sampler = torch.utils.data.BatchSampler(self.train_sampler, self.batch_size, drop_last=True)
+
+        self.data_loader = torch.utils.data.DataLoader(self.dataset, batch_sampler=train_batch_sampler, num_workers=self.workers,
+                                                collate_fn=utils.collate_fn)
+
+        params = [p for p in self.task_model.parameters() if p.requires_grad]
+        self.task_optimizer = torch.optim.SGD(params, lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+        task_lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(self.task_optimizer, milestones=self.lr_steps,
+                                                                gamma=self.lr_gamma)
+        
+        # Start active learning cycles training
+        print("Start training")
+        start_time = time.time()
+        for epoch in range(self.start_epoch, self.total_epochs):
+            self.task_model
+            self.train_one_epoch(cycle, epoch)
+            task_lr_scheduler.step()
+            # evaluate after pre-set epoch
+            '''
+            if (epoch + 1) == self.total_epochs:
+                voc_evaluate(self.task_model, self.data_loader_test, self.dataset_name, False, path=self.results_path)
+                if 'coco' in self.dataset_name:
+                    coco_evaluate(self.task_model, self.data_loader_test)
+                elif 'voc' in self.dataset_name:
+                    voc_evaluate(self.task_model, self.data_loader_test, self.dataset_name, False, path=self.results_path)
+            '''
+
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('Training time {}'.format(total_time_str))
+
+        self.save_model()
+
+    def train_one_epoch(self, cycle, epoch):
+        self.task_model.train()
+        metric_logger = utils.MetricLogger(delimiter="  ")
+        metric_logger.add_meter('task_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        header = 'Cycle:[{}] Epoch: [{}]'.format(cycle, epoch)
+
+        task_lr_scheduler = None
+
+        if epoch == 0:
+            warmup_factor = 1. / 1000
+            warmup_iters = min(1000, len(self.data_loader) - 1)
+            task_lr_scheduler = utils.warmup_lr_scheduler(self.task_optimizer, warmup_iters, warmup_factor)
+
+        for images, targets in metric_logger.log_every(self.data_loader, self.print_freq, header):
+            images = list(image.to(self.device) for image in images)
+            targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+            task_loss_dict = self.task_model(images, targets)
+            task_losses = sum(loss for loss in task_loss_dict.values())
+            # reduce losses over all GPUs for logging purposes
+            task_loss_dict_reduced = utils.reduce_dict(task_loss_dict)
+            task_losses_reduced = sum(loss.cpu() for loss in task_loss_dict_reduced.values())
+            task_loss_value = task_losses_reduced.item()
+            if not math.isfinite(task_loss_value):
+                print("Loss is {}, stopping training".format(task_loss_value))
+                print(task_loss_dict_reduced)
+                sys.exit(1)
+
+            self.task_optimizer.zero_grad()
+            task_losses.backward()
+            self.task_optimizer.step()
+            if task_lr_scheduler is not None:
+                task_lr_scheduler.step()
+            metric_logger.update(task_loss=task_losses_reduced)
+            metric_logger.update(task_lr=self.task_optimizer.param_groups[0]["lr"])
+        return metric_logger
 
     def before_select(self):
         random.shuffle(self.unlabeled_set)
@@ -202,81 +286,6 @@ class Client:
             # result.append(cls_corrs[max_ind])
         return cls_inds
 
-    def train(self, cycle):
-        # for cycle in range(self.cycles):
-        if self.aspect_ratio_group_factor >= 0:
-            group_ids = create_aspect_ratio_groups(self.dataset, k=self.aspect_ratio_group_factor)
-            train_batch_sampler = GroupedBatchSampler(self.train_sampler, group_ids, self.batch_size)
-        else:
-            train_batch_sampler = torch.utils.data.BatchSampler(self.train_sampler, self.batch_size, drop_last=True)
-
-        self.data_loader = torch.utils.data.DataLoader(self.dataset, batch_sampler=train_batch_sampler, num_workers=self.workers,
-                                                collate_fn=utils.collate_fn)
-
-        params = [p for p in self.task_model.parameters() if p.requires_grad]
-        self.task_optimizer = torch.optim.SGD(params, lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
-        task_lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(self.task_optimizer, milestones=self.lr_steps,
-                                                                gamma=self.lr_gamma)
-        
-        # Start active learning cycles training
-        print("Start training")
-        start_time = time.time()
-        for epoch in range(self.start_epoch, self.total_epochs):
-            self.task_model
-            self.train_one_epoch(cycle, epoch)
-            task_lr_scheduler.step()
-            # evaluate after pre-set epoch
-            '''
-            if (epoch + 1) == self.total_epochs:
-                voc_evaluate(self.task_model, self.data_loader_test, self.dataset_name, False, path=self.results_path)
-                if 'coco' in self.dataset_name:
-                    coco_evaluate(self.task_model, self.data_loader_test)
-                elif 'voc' in self.dataset_name:
-                    voc_evaluate(self.task_model, self.data_loader_test, self.dataset_name, False, path=self.results_path)
-            '''
-
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Training time {}'.format(total_time_str))
-
-        return self.task_model.to(device='cpu').state_dict()
-
-    def train_one_epoch(self, cycle, epoch):
-        self.task_model.train()
-        metric_logger = utils.MetricLogger(delimiter="  ")
-        metric_logger.add_meter('task_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-        header = 'Cycle:[{}] Epoch: [{}]'.format(cycle, epoch)
-
-        task_lr_scheduler = None
-
-        if epoch == 0:
-            warmup_factor = 1. / 1000
-            warmup_iters = min(1000, len(self.data_loader) - 1)
-            task_lr_scheduler = utils.warmup_lr_scheduler(self.task_optimizer, warmup_iters, warmup_factor)
-
-        for images, targets in metric_logger.log_every(self.data_loader, self.print_freq, header):
-            images = list(image.to(self.device) for image in images)
-            targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
-            task_loss_dict = self.task_model(images, targets)
-            task_losses = sum(loss for loss in task_loss_dict.values())
-            # reduce losses over all GPUs for logging purposes
-            task_loss_dict_reduced = utils.reduce_dict(task_loss_dict)
-            task_losses_reduced = sum(loss.cpu() for loss in task_loss_dict_reduced.values())
-            task_loss_value = task_losses_reduced.item()
-            if not math.isfinite(task_loss_value):
-                print("Loss is {}, stopping training".format(task_loss_value))
-                print(task_loss_dict_reduced)
-                sys.exit(1)
-
-            self.task_optimizer.zero_grad()
-            task_losses.backward()
-            self.task_optimizer.step()
-            if task_lr_scheduler is not None:
-                task_lr_scheduler.step()
-            metric_logger.update(task_loss=task_losses_reduced)
-            metric_logger.update(task_lr=self.task_optimizer.param_groups[0]["lr"])
-        return metric_logger
-
     def calcu_iou(self, A, B):
         '''
         calculate two box's iou
@@ -292,7 +301,7 @@ class Client:
 
 
     def get_uncertainty(self, unlabeled_loader):
-        self.task_model.to(device=self.device)
+        # self.task_model.to(device=self.device)
         for aug in self.augs:
             if aug not in ['flip', 'multi_ga', 'color_adjust', 'color_swap', 'multi_color_adjust', 'multi_sp', 'cut_out',
                         'multi_cut_out', 'multi_resize', 'larger_resize', 'smaller_resize', 'rotation', 'ga', 'sp']:

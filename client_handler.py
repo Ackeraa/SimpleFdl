@@ -18,7 +18,8 @@ class Worker:
         model = data['content']['model']
         indices = data['content']['indices']
         total_epochs = data['content']['total_epochs']
-        self.client = Client(gpu_id, data_path, dataset_name, model, indices, total_epochs)
+        id = data['content']['total_epochs']
+        self.client = Client(gpu_id, data_path, dataset_name, model, indices, total_epochs, id)
 
     def send(self, data):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -39,16 +40,16 @@ class Worker:
         return pickle.loads(data)
 
     def train(self, cycle):
-        model = self.client.train(cycle)
-        data = { 'typ': 'model', 'content': model }
+        self.client.train(cycle)
+        data = { 'typ': 'model', 'content': self.client.id }
         self.send(data)
 
     def calculate(self):
         q = self.client.before_select()
         data = { 'typ': 'q', 'content': q }
         kl = self.send(data)
-        q = self.client.select(kl)
-        data = { 'typ': 'sumq', 'content': q }
+        sumq = self.client.select(kl)
+        data = { 'typ': 'sumq', 'content': sumq }
         self.send(data)
 
 if __name__ == '__main__':
